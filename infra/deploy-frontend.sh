@@ -14,13 +14,31 @@ main() {
   api_base_url="$(output "$BACKEND_STACK" ApiBaseUrl)"
 
   echo "==> [1/6] Build the frontend (API: $api_base_url)"
-  (cd frontend && npm ci && \
-    VITE_API_URL="$api_base_url" \
-    COGNITO_USER_POOL_ID="$(output "$AUTH_STACK" UserPoolId)" \
-    COGNITO_CLIENT_ID="$(output "$AUTH_STACK" UserPoolClientId)" \
-    COGNITO_DOMAIN="$(output "$AUTH_STACK" Domain)" \
-    COGNITO_GOOGLE_ENABLED="$(output "$AUTH_STACK" GoogleEnabled)" \
-    npm run build)
+  user_pool_id="$(output "$AUTH_STACK" UserPoolId)"
+  user_pool_client_id="$(output "$AUTH_STACK" UserPoolClientId)"
+  cognito_domain="$(output "$AUTH_STACK" Domain)"
+  cognito_google_enabled="$(output "$AUTH_STACK" GoogleEnabled)"
+
+  if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.platform' 2>/dev/null)" = linux ]; then
+    (cd frontend && npm ci && \
+      VITE_API_URL="$api_base_url" \
+      COGNITO_USER_POOL_ID="$user_pool_id" \
+      COGNITO_CLIENT_ID="$user_pool_client_id" \
+      COGNITO_DOMAIN="$cognito_domain" \
+      COGNITO_GOOGLE_ENABLED="$cognito_google_enabled" \
+      npm run build)
+  else
+    echo "    Using Docker for the frontend build (the available Node.js is not Linux-native)."
+    docker run --rm \
+      --volume "$PWD/frontend:/app" \
+      --workdir /app \
+      --env "VITE_API_URL=$api_base_url" \
+      --env "COGNITO_USER_POOL_ID=$user_pool_id" \
+      --env "COGNITO_CLIENT_ID=$user_pool_client_id" \
+      --env "COGNITO_DOMAIN=$cognito_domain" \
+      --env "COGNITO_GOOGLE_ENABLED=$cognito_google_enabled" \
+      node:24-bookworm sh -c 'npm ci && npm run build'
+  fi
 
   echo "==> [2/6] S3 bucket + CloudFront ($FRONTEND_STACK)"
   echo "    The first run creates the CloudFront distribution and takes about 5 minutes."

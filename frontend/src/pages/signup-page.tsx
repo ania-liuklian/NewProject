@@ -1,13 +1,15 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
-import { Link, useNavigate } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { z } from 'zod'
 
 import { AuthLayout, GoogleButton, OrDivider, PasswordInput } from '@/components/auth-layout'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { useGoogleLogin, useSignup } from '@/lib/auth'
+import { useConfirmSignup, useGoogleLogin, useResendCode, useSignup } from '@/lib/auth'
 
 const signupSchema = z
   .object({
@@ -22,28 +24,77 @@ const signupSchema = z
   })
 
 type SignupValues = z.infer<typeof signupSchema>
+const confirmationSchema = z.object({
+  code: z.string().trim().min(1, 'Enter the verification code'),
+})
+type ConfirmationValues = z.infer<typeof confirmationSchema>
+
+type SignupLocationState = { confirmEmail?: string } | null
 
 export function SignupPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const confirmEmail = (location.state as SignupLocationState)?.confirmEmail
+  const [confirmationNotice, setConfirmationNotice] = useState('')
   const signup = useSignup()
   const googleLogin = useGoogleLogin()
+  const confirmSignup = useConfirmSignup()
+  const resendCode = useResendCode()
   const pending = signup.isPending || googleLogin.isPending
   const form = useForm<SignupValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
   })
+  const confirmationForm = useForm<ConfirmationValues>({
+    resolver: zodResolver(confirmationSchema),
+    defaultValues: { code: '' },
+  })
 
   const onSuccess = () => navigate('/home', { replace: true })
   const onError = (error: Error) => form.setError('root', { message: error.message })
 
+  const onSignupSuccess = (
+    { needsConfirmation }: { needsConfirmation: boolean },
+    email: string,
+  ) => {
+    if (needsConfirmation) {
+      navigate('/signup', { replace: true, state: { confirmEmail: email } })
+    } else {
+      onSuccess()
+    }
+  }
+
   const onSubmit = form.handleSubmit(({ name, email, password }) =>
-    signup.mutate({ name: name.trim(), email, password }, { onSuccess, onError }),
+    signup.mutate(
+      { name: name.trim(), email, password },
+      { onSuccess: (result) => onSignupSuccess(result, email), onError },
+    ),
   )
+
+  const onConfirm = confirmationForm.handleSubmit(({ code }) => {
+    if (!confirmEmail) return
+    confirmSignup.mutate(
+      { email: confirmEmail, code },
+      {
+        onSuccess: (user) => {
+          if (user) onSuccess()
+          else
+            navigate('/login', {
+              replace: true,
+              state: { email: confirmEmail, notice: 'Email confirmed. Sign in to continue.' },
+            })
+        },
+        onError: (error) => confirmationForm.setError('root', { message: error.message }),
+      },
+    )
+  })
 
   return (
     <AuthLayout
-      title="Create account"
-      subtitle="Plan meetings with your team."
+      title={confirmEmail ? 'Verify your email' : 'Create account'}
+      subtitle={
+        confirmEmail ? `Enter the code sent to ${confirmEmail}.` : 'Plan meetings with your team.'
+      }
       footer={
         <>
           Already have an account?{' '}
@@ -53,62 +104,19 @@ export function SignupPage() {
         </>
       }
     >
-      <GoogleButton
-        disabled={pending}
-        pending={googleLogin.isPending}
-        onClick={() => googleLogin.mutate(undefined, { onSuccess, onError })}
-      >
-        Sign up with Google
-      </GoogleButton>
-      <OrDivider />
-      <form onSubmit={onSubmit} noValidate>
-        <FieldGroup className="gap-4 short:gap-3">
-          <Controller
-            name="name"
-            control={form.control}
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor="signup-name">Name</FieldLabel>
-                <Input
-                  id="signup-name"
-                  autoComplete="name"
-                  autoFocus
-                  aria-invalid={fieldState.invalid}
-                  {...field}
-                />
-                <FieldError errors={[fieldState.error]} />
-              </Field>
-            )}
-          />
-          <Controller
-            name="email"
-            control={form.control}
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor="signup-email">Email</FieldLabel>
-                <Input
-                  id="signup-email"
-                  type="email"
-                  autoComplete="email"
-                  aria-invalid={fieldState.invalid}
-                  {...field}
-                />
-                <FieldError errors={[fieldState.error]} />
-              </Field>
-            )}
-          />
-          {/* Side by side on wider screens so the whole form fits without scrolling. */}
-          <div className="grid gap-4 sm:grid-cols-2 short:gap-3">
+      {confirmEmail ? (
+        <form onSubmit={onConfirm} noValidate>
+          <FieldGroup className="gap-4">
             <Controller
-              name="password"
-              control={form.control}
+              name="code"
+              control={confirmationForm.control}
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel htmlFor="signup-password">Password</FieldLabel>
-                  <PasswordInput
-                    id="signup-password"
-                    autoComplete="new-password"
-                    placeholder="At least 8 characters"
+                  <FieldLabel htmlFor="signup-code">Verification code</FieldLabel>
+                  <Input
+                    id="signup-code"
+                    autoComplete="one-time-code"
+                    autoFocus
                     aria-invalid={fieldState.invalid}
                     {...field}
                   />
@@ -116,31 +124,125 @@ export function SignupPage() {
                 </Field>
               )}
             />
-            <Controller
-              name="confirmPassword"
-              control={form.control}
-              render={({ field, fieldState }) => (
-                <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel htmlFor="signup-confirm">Confirm</FieldLabel>
-                  <PasswordInput
-                    id="signup-confirm"
-                    autoComplete="new-password"
-                    aria-invalid={fieldState.invalid}
-                    {...field}
-                  />
-                  <FieldError errors={[fieldState.error]} />
-                </Field>
+            {confirmationForm.formState.errors.root && (
+              <FieldError>{confirmationForm.formState.errors.root.message}</FieldError>
+            )}
+            {confirmationNotice && (
+              <Alert>
+                <AlertDescription>{confirmationNotice}</AlertDescription>
+              </Alert>
+            )}
+            <Button type="submit" disabled={confirmSignup.isPending}>
+              {confirmSignup.isPending ? 'Verifying...' : 'Verify email'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={resendCode.isPending}
+              onClick={() =>
+                resendCode.mutate(confirmEmail, {
+                  onSuccess: () => setConfirmationNotice('A new verification code has been sent.'),
+                  onError: (error) =>
+                    confirmationForm.setError('root', { message: error.message }),
+                })
+              }
+            >
+              {resendCode.isPending ? 'Sending...' : 'Resend code'}
+            </Button>
+          </FieldGroup>
+        </form>
+      ) : (
+        <>
+          <GoogleButton
+            disabled={pending}
+            pending={googleLogin.isPending}
+            onClick={() => googleLogin.mutate(undefined, { onSuccess, onError })}
+          >
+            Sign up with Google
+          </GoogleButton>
+          <OrDivider />
+          <form onSubmit={onSubmit} noValidate>
+            <FieldGroup className="gap-4 short:gap-3">
+              <Controller
+                name="name"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor="signup-name">Name</FieldLabel>
+                    <Input
+                      id="signup-name"
+                      autoComplete="name"
+                      autoFocus
+                      aria-invalid={fieldState.invalid}
+                      {...field}
+                    />
+                    <FieldError errors={[fieldState.error]} />
+                  </Field>
+                )}
+              />
+              <Controller
+                name="email"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor="signup-email">Email</FieldLabel>
+                    <Input
+                      id="signup-email"
+                      type="email"
+                      autoComplete="email"
+                      aria-invalid={fieldState.invalid}
+                      {...field}
+                    />
+                    <FieldError errors={[fieldState.error]} />
+                  </Field>
+                )}
+              />
+              {/* Side by side on wider screens so the whole form fits without scrolling. */}
+              <div className="grid gap-4 sm:grid-cols-2 short:gap-3">
+                <Controller
+                  name="password"
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <Field data-invalid={fieldState.invalid}>
+                      <FieldLabel htmlFor="signup-password">Password</FieldLabel>
+                      <PasswordInput
+                        id="signup-password"
+                        autoComplete="new-password"
+                        placeholder="At least 8 characters"
+                        aria-invalid={fieldState.invalid}
+                        {...field}
+                      />
+                      <FieldError errors={[fieldState.error]} />
+                    </Field>
+                  )}
+                />
+                <Controller
+                  name="confirmPassword"
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <Field data-invalid={fieldState.invalid}>
+                      <FieldLabel htmlFor="signup-confirm">Confirm</FieldLabel>
+                      <PasswordInput
+                        id="signup-confirm"
+                        autoComplete="new-password"
+                        aria-invalid={fieldState.invalid}
+                        {...field}
+                      />
+                      <FieldError errors={[fieldState.error]} />
+                    </Field>
+                  )}
+                />
+              </div>
+              {form.formState.errors.root && (
+                <FieldError>{form.formState.errors.root.message}</FieldError>
               )}
-            />
-          </div>
-          {form.formState.errors.root && (
-            <FieldError>{form.formState.errors.root.message}</FieldError>
-          )}
-          <Button type="submit" className="mt-1 w-full" disabled={pending}>
-            {signup.isPending ? 'Creating account...' : 'Create account'}
-          </Button>
-        </FieldGroup>
-      </form>
+              <Button type="submit" className="mt-1 w-full" disabled={pending}>
+                {signup.isPending ? 'Creating account...' : 'Create account'}
+              </Button>
+            </FieldGroup>
+          </form>
+        </>
+      )}
     </AuthLayout>
   )
 }
