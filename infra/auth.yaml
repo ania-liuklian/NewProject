@@ -35,6 +35,11 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub ${ProjectName}-users
+      # Managed Login v2 requires a user pool tier above Lite.
+      UserPoolTier: ESSENTIALS
+      # Explicitly permit public self-registration from Cognito Managed Login.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
       # Users sign in with their email; Cognito emails a code to verify it.
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
@@ -81,6 +86,8 @@ Resources:
     Properties:
       UserPoolId: !Ref UserPool
       Domain: !Sub ${ProjectName}-${AWS::AccountId}
+      # Version 2 is Cognito Managed Login.
+      ManagedLoginVersion: 2
 
   GoogleIdentityProvider:
     Type: AWS::Cognito::UserPoolIdentityProvider
@@ -130,6 +137,15 @@ Resources:
       LogoutURLs: !Split
         - ","
         - !Join ["", [!Join ["/login,", !Ref AppUrls], "/login"]]
+
+  # Programmatic app clients need a branding style for Managed Login v2.
+  ManagedLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref UserPoolClient
+      UseCognitoProvidedValues: true
 
 Outputs:
   Region:

@@ -77,6 +77,12 @@ export function HomePage() {
           </Button>
           {user && (
             <div className="flex items-center gap-1">
+              <span
+                className="hidden max-w-48 truncate text-sm font-medium text-muted-foreground sm:block"
+                title={user.email}
+              >
+                {user.email}
+              </span>
               <Link
                 to="/profile"
                 className="flex size-8 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-secondary-foreground transition-colors hover:bg-secondary/80 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"

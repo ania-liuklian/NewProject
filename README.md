@@ -53,6 +53,71 @@ Everything is described with CloudFormation in [`infra/`](infra/) and deployed t
 
 Requires Docker, Node.js and the AWS CLI. `make infra-lint` checks the templates.
 
+### Cognito sign-in and Google OAuth
+
+`/login` immediately redirects signed-out visitors to **Amazon Cognito Managed Login**. Cognito
+provides email/password sign-in, self sign-up and (when configured) Google sign-in. After
+authentication Cognito returns to `/login`; the app reads the ID token and sends the user to
+their meetings. Self sign-up is explicitly enabled in `infra/auth.yaml`.
+
+#### Create and publish the Google OAuth app
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and select or create a project
+   for this app. Make sure you have permission to edit its OAuth configuration.
+2. Open **Google Auth Platform → Branding** (called **OAuth consent screen** in some Console
+   layouts). Set the app name, a support email, and developer contact email. For **Audience**,
+   choose **External** so accounts outside your Google Workspace can sign in. Fill in the required
+   contact/branding fields and save. The app only asks Google for the basic `openid`, `email`, and
+   `profile` identity scopes; it does not request access to Calendar or other Google APIs.
+3. Open **Google Auth Platform → Clients → Create client**. Choose **Web application**, give it a
+   name, and under **Authorized redirect URIs** add exactly:
+
+   ```text
+   https://<COGNITO_DOMAIN>/oauth2/idpresponse
+   ```
+
+   Here `<COGNITO_DOMAIN>` is the Cognito domain created by this repo, without `https://` or a
+   trailing slash. With the default settings it is
+   `<PROJECT_NAME>-<AWS_ACCOUNT_ID>.auth.<AWS_REGION>.amazoncognito.com`; for example, if
+   `PROJECT_NAME=meetings`, AWS account ID is `123456789012`, and region is `us-east-1`, use
+   `https://meetings-123456789012.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
+   The AWS account ID is the 12-digit ID shown in the AWS Console account menu. Leave
+   In **Authorized JavaScript origins**, also add the Cognito origin without a path, for example
+   `https://meetings-123456789012.auth.us-east-1.amazoncognito.com`. Do not use the app's `/login`
+   URL as Google's redirect URI.
+4. Create the client and copy its **Client ID** and **Client secret**. Keep the secret private;
+   Cognito uses it server-side. Put both values in the project-root `.env` (never commit this
+   file):
+
+   ```dotenv
+   GOOGLE_CLIENT_ID=<Google Client ID>
+   GOOGLE_CLIENT_SECRET=<Google Client secret>
+   ```
+
+5. In **Google Auth Platform → Audience**, click **Publish app** (or **Make external users
+   available**, depending on the Console wording) and confirm. Check that the publishing status
+   reads **In production** before submitting the assignment. `Testing` can limit who may sign in.
+   This app requests only basic identity scopes, which generally do not require sensitive-scope
+   verification; production publishing and Google's app verification are separate statuses. If
+   Google prompts for branding verification, complete the requested project/app details.
+
+#### Deploy Cognito and the site
+
+1. Configure the AWS values in `.env` as described above in **Deploy to AWS**. The same
+   `PROJECT_NAME` and `AWS_REGION` determine the Cognito domain used in Google's redirect URI.
+2. Run `make deploy-auth`. This creates the user pool, email/password app client, Cognito domain,
+   Managed Login v2 branding, and Google identity provider, then writes the public Cognito settings
+   to `.env`. The deploy output should say `Google sign-in: enabled` and
+   `COGNITO_GOOGLE_ENABLED=true`.
+3. Run `make deploy` to deploy the backend and frontend. The frontend deploy adds the resulting
+   CloudFront URL (and any configured custom domain) to Cognito's allowed callback URLs. Open
+   `https://<your-site>/login`; Cognito should show email/password, a sign-up option, and **Continue
+   with Google**. After sign-in the app header shows the user's email.
+
+Google's callback is always the Cognito domain's `/oauth2/idpresponse`; Cognito's app-client
+callback is the site URL plus `/login`. These are two different redirects, and both must be
+configured at their respective providers.
+
 ### Custom domain
 
 Once everything is deployed, set the domain in `.env` and attach it:

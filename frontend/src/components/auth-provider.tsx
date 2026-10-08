@@ -1,13 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Hub } from 'aws-amplify/utils'
 import { signOut as cognitoSignOut } from 'aws-amplify/auth'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-import { AuthContext, authConfigured, loadUser, type User } from '@/lib/auth'
+import { AuthContext, authConfig, authConfigured, loadUser, type User } from '@/lib/auth'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [user, setUser] = useState<User | null | undefined>(authConfigured ? undefined : null)
+  const hostedLogoutInProgress = useRef(false)
 
   useEffect(() => {
     if (!authConfigured) return
@@ -18,7 +19,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // (e.g. a 401 from the API), or a refresh token that no longer works.
     const stop = Hub.listen('auth', ({ payload }) => {
       if (payload.event === 'signedIn' || payload.event === 'signInWithRedirect') refresh()
-      if (payload.event === 'signedOut' || payload.event === 'tokenRefresh_failure') {
+      if (
+        (payload.event === 'signedOut' && !hostedLogoutInProgress.current) ||
+        payload.event === 'tokenRefresh_failure'
+      ) {
         setUser(null)
         // The next user must not see this user's cached meetings.
         queryClient.clear()
@@ -32,9 +36,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = (next: User) => setUser(next)
   const signOut = async () => {
-    await cognitoSignOut()
-    setUser(null)
+    hostedLogoutInProgress.current = true
+    // Clear Amplify's local tokens, then clear the Managed Login browser session too.
+    // Keep the app on the current page until navigation, or /login can start a new
+    // Managed Login redirect before the browser reaches Cognito's logout endpoint.
+    try {
+      await cognitoSignOut()
+    } catch {
+      // Continue to Cognito's logout endpoint even if local token cleanup failed.
+    }
     queryClient.clear()
+
+    if (authConfig.domain && authConfig.clientId) {
+      const domain = authConfig.domain.startsWith('http')
+        ? authConfig.domain
+        : `https://${authConfig.domain}`
+      const logoutUrl = new URL('/logout', domain)
+      logoutUrl.searchParams.set('client_id', authConfig.clientId)
+      logoutUrl.searchParams.set('logout_uri', `${window.location.origin}/login`)
+      window.location.replace(logoutUrl.toString())
+      return
+    }
+
+    hostedLogoutInProgress.current = false
+    setUser(null)
   }
 
   return <AuthContext value={{ user, signIn, signOut }}>{children}</AuthContext>
