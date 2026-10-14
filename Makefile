@@ -7,7 +7,7 @@ s ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
-	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-frontend destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint
+	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-frontend deploy-reports report-now report-evidence destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -80,6 +80,16 @@ AWS_ENV := AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" AWS_SECRET_ACCESS_KEY="$(AWS
 	PROJECT_NAME="$(or $(PROJECT_NAME),$(APP_NAME))" CORS_ORIGINS_AWS="$(CORS_ORIGINS_AWS)" \
 	LAMBDA_MEMORY="$(LAMBDA_MEMORY)" DOMAIN_NAME="$(DOMAIN_NAME)" HOSTED_ZONE_ID="$(HOSTED_ZONE_ID)" \
 	GOOGLE_CLIENT_ID="$(GOOGLE_CLIENT_ID)" GOOGLE_CLIENT_SECRET="$(GOOGLE_CLIENT_SECRET)"
+
+deploy-reports: env ## Deploy the weekly report pipeline (requires REPORTS_EMAIL_* in .env)
+	@$(AWS_ENV) REPORTS_EMAIL_FROM="$(REPORTS_EMAIL_FROM)" REPORTS_EMAIL_TO="$(REPORTS_EMAIL_TO)" ./infra/deploy-reports.sh
+
+report-now: env ## Queue a report: make report-now WEEK=2026-W40
+	@test -n "$(WEEK)" || (echo 'Usage: make report-now WEEK=YYYY-Www' && exit 1)
+	@$(AWS_ENV) REPORT_WEEK="$(WEEK)" ./infra/report-now.sh
+
+report-evidence: env ## Print the reports S3 listing and required trigger log lines
+	@$(AWS_ENV) ./infra/report-evidence.sh
 
 deploy: deploy-backend deploy-frontend ## Deploy the whole app to AWS (after make deploy-auth)
 

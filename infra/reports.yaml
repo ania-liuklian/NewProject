@@ -1,0 +1,276 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Weekly meetings reports, built by Lambda and delivered through S3 events and SES.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: meetings
+    AllowedPattern: "[a-z][a-z0-9-]*"
+  ImageUri:
+    Type: String
+    Description: Backend container image, which includes the report handlers and Lambda runtime client.
+  DBPassword:
+    Type: String
+    NoEcho: true
+  EmailFrom:
+    Type: String
+    Description: Sender email address to verify in Amazon SES.
+  EmailTo:
+    Type: String
+    Description: Destination email address (must also be verified while SES is in sandbox).
+
+Resources:
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: MailerInvokePermission
+    Properties:
+      BucketName: !Sub ${ProjectName}-reports-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireReportsAfter90Days
+            Status: Enabled
+            ExpirationInDays: 90
+            Prefix: reports/
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt MailerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: reports/
+                  - Name: suffix
+                    Value: .csv
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  ReportsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ProjectName}-report-requests-dlq
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  ReportsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${ProjectName}-report-requests
+      VisibilityTimeout: 360
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ReportsDlq.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  BuilderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-report-builder
+      RetentionInDays: 14
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  BuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: BuildReports
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ProjectName}-reports-${AWS::AccountId}/reports/*
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt ReportsQueue.Arn
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  BuilderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-report-builder
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      ImageConfig:
+        EntryPoint: [python, -m, awslambdaric]
+        Command: [app.reports.lambda_handler.handler]
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 60
+      Role: !GetAtt BuilderRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnetA
+          - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnetB
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub ${ProjectName}-FunctionSecurityGroup
+      LoggingConfig:
+        LogGroup: !Ref BuilderLogGroup
+      Environment:
+        Variables:
+          DATABASE_URL: !Sub
+            - postgresql+asyncpg://${DbUser}:${DBPassword}@${DbHost}:${DbPort}/${DbName}
+            - DbUser:
+                Fn::ImportValue: !Sub ${ProjectName}-DatabaseUser
+              DbHost:
+                Fn::ImportValue: !Sub ${ProjectName}-DatabaseEndpoint
+              DbPort:
+                Fn::ImportValue: !Sub ${ProjectName}-DatabasePort
+              DbName:
+                Fn::ImportValue: !Sub ${ProjectName}-DatabaseName
+          DB_POOL_SIZE: "1"
+          DB_MAX_OVERFLOW: "0"
+          REPORTS_BUCKET: !Ref ReportsBucket
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  QueueToBuilder:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ReportsQueue.Arn
+      FunctionName: !Ref BuilderFunction
+      BatchSize: 1
+      Enabled: true
+
+  ScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EnqueueWeeklyReport
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ReportsQueue.Arn
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  WeeklySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${ProjectName}-weekly-report
+      Description: Queue the previous ISO week's meetings report every Monday at 07:00 Kyiv time.
+      ScheduleExpression: cron(0 7 ? * MON *)
+      ScheduleExpressionTimezone: Europe/Kyiv
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt ReportsQueue.Arn
+        RoleArn: !GetAtt ScheduleRole.Arn
+        Input: '{"week":null,"source":"schedule"}'
+
+  MailerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-report-mailer
+      RetentionInDays: 14
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  MailerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadReportsAndSendEmail
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-report-mailer:*
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ProjectName}-reports-${AWS::AccountId}/reports/*
+              - Effect: Allow
+                Action: [ses:SendEmail, ses:SendRawEmail]
+                Resource: "*"
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  MailerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-report-mailer
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      ImageConfig:
+        EntryPoint: [python, -m, awslambdaric]
+        Command: [app.reports.mailer.handler]
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt MailerRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref MailerLogGroup
+      Environment:
+        Variables:
+          REPORTS_EMAIL_FROM: !Ref EmailFrom
+          REPORTS_EMAIL_TO: !Ref EmailTo
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  MailerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MailerFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:s3:::${ProjectName}-reports-${AWS::AccountId}
+      SourceAccount: !Ref AWS::AccountId
+
+Outputs:
+  ReportsBucket:
+    Value: !Ref ReportsBucket
+  ReportsQueueUrl:
+    Value: !Ref ReportsQueue
+  ReportsQueueArn:
+    Value: !GetAtt ReportsQueue.Arn
+  ReportsDlqUrl:
+    Value: !Ref ReportsDlq
+  BuilderLogGroup:
+    Value: !Ref BuilderLogGroup
+  MailerLogGroup:
+    Value: !Ref MailerLogGroup

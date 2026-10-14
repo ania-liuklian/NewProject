@@ -103,6 +103,45 @@ Resources:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
 
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTableA
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTableB
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds: [!Ref PrivateRouteTableA, !Ref PrivateRouteTableB]
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
   # --------------------------------------------------------- Security groups
   FunctionSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -291,5 +330,35 @@ Outputs:
     Value: !Ref Function
   DatabaseEndpoint:
     Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: !Sub ${ProjectName}-DatabaseEndpoint
+  DatabasePort:
+    Value: !GetAtt Database.Endpoint.Port
+    Export:
+      Name: !Sub ${ProjectName}-DatabasePort
+  DatabaseName:
+    Value: !Ref DBName
+    Export:
+      Name: !Sub ${ProjectName}-DatabaseName
+  DatabaseUser:
+    Value: !Ref DBUser
+    Export:
+      Name: !Sub ${ProjectName}-DatabaseUser
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub ${ProjectName}-VpcId
+  PrivateSubnetA:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub ${ProjectName}-PrivateSubnetA
+  PrivateSubnetB:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub ${ProjectName}-PrivateSubnetB
+  FunctionSecurityGroup:
+    Value: !Ref FunctionSecurityGroup
+    Export:
+      Name: !Sub ${ProjectName}-FunctionSecurityGroup
   LogGroup:
     Value: !Ref LogGroup
