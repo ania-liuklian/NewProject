@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Authenticated agenda parser Lambda using Cloudflare Workers AI.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: meetings
+    AllowedPattern: "[a-z][a-z0-9-]*"
+  ImageUri:
+    Type: String
+  CognitoUserPoolId:
+    Type: String
+  CognitoClientId:
+    Type: String
+  CorsOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173,http://localhost:3000
+  ParserModel:
+    Type: String
+    Default: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  CloudflareAccountId:
+    Type: String
+    NoEcho: true
+  CloudflareApiToken:
+    Type: String
+    NoEcho: true
+  AlertEmail:
+    Type: String
+    Description: Email address for the monthly AWS $5 budget alert.
+
+Resources:
+  ParserLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-agenda-parser
+      RetentionInDays: 14
+      Tags: [{ Key: PROJECT_NAME, Value: !Ref ProjectName }]
+
+  ParserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WriteLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-agenda-parser:*
+      Tags: [{ Key: PROJECT_NAME, Value: !Ref ProjectName }]
+
+  ParserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-agenda-parser
+      PackageType: Image
+      Code: { ImageUri: !Ref ImageUri }
+      ImageConfig:
+        EntryPoint: [python, -m, awslambdaric]
+        Command: [app.ai.agenda_lambda.handler]
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 30
+      Role: !GetAtt ParserRole.Arn
+      LoggingConfig: { LogGroup: !Ref ParserLogGroup }
+      Environment:
+        Variables:
+          PARSER_MODEL: !Ref ParserModel
+          CLOUDFLARE_ACCOUNT_ID: !Ref CloudflareAccountId
+          CLOUDFLARE_API_TOKEN: !Ref CloudflareApiToken
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+      Tags: [{ Key: PROJECT_NAME, Value: !Ref ProjectName }]
+
+  ParserUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref ParserFunction
+      AuthType: NONE
+      Cors:
+        AllowOrigins: !Ref CorsOrigins
+        AllowMethods: [POST]
+        AllowHeaders: [authorization, content-type]
+        MaxAge: 600
+
+  ParserUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ParserFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  ParserInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ParserFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub ${ProjectName}-monthly-5-dollar-limit
+        BudgetLimit: { Amount: 5, Unit: USD }
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+      ResourceTags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+Outputs:
+  ParserUrl:
+    Value: !GetAtt ParserUrl.FunctionUrl
+  ParserLogGroup:
+    Value: !Ref ParserLogGroup

@@ -7,7 +7,7 @@ s ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
-	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-frontend deploy-reports report-now report-evidence destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint
+	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-ai deploy-frontend deploy-reports report-now report-evidence destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -91,13 +91,16 @@ report-now: env ## Queue a report: make report-now WEEK=2026-W40
 report-evidence: env ## Print the reports S3 listing and required trigger log lines
 	@$(AWS_ENV) ./infra/report-evidence.sh
 
-deploy: deploy-backend deploy-frontend ## Deploy the whole app to AWS (after make deploy-auth)
+deploy: deploy-backend deploy-ai deploy-frontend ## Deploy the whole app to AWS (after make deploy-auth)
 
 deploy-auth: env ## Deploy Cognito (user pool + app client), print its settings and write them to .env
 	@$(AWS_ENV) ./infra/deploy-auth.sh
 
 deploy-backend: env ## Deploy backend (Lambda) + database (Aurora Serverless) to AWS, see infra/
 	@$(AWS_ENV) ./infra/deploy-backend.sh
+
+deploy-ai: env ## Deploy the Cloudflare Workers AI agenda parser Lambda
+	@$(AWS_ENV) CLOUDFLARE_ACCOUNT_ID="$(CLOUDFLARE_ACCOUNT_ID)" CLOUDFLARE_API_TOKEN="$(CLOUDFLARE_API_TOKEN)" PARSER_MODEL="$(PARSER_MODEL)" REPORTS_EMAIL_TO="$(REPORTS_EMAIL_TO)" ./infra/deploy-ai.sh
 
 deploy-frontend: env ## Deploy frontend to S3 + CloudFront, wired to the Lambda URL (after deploy-backend)
 	@$(AWS_ENV) ./infra/deploy-frontend.sh

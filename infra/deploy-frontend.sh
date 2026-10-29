@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the frontend against the backend's Lambda function URL and deploys it to
-# S3 + CloudFront. Run via `make deploy-frontend` after `make deploy-backend`.
+# S3 + CloudFront. Run via `make deploy-frontend` after `make deploy-ai`.
 set -euo pipefail
 
 # Everything runs inside main so bash parses the whole file before starting. Otherwise
@@ -12,6 +12,7 @@ main() {
   stack_exists "$BACKEND_STACK" || { echo "Stack $BACKEND_STACK not found; run make deploy-backend first." >&2; exit 1; }
   require_auth_stack
   api_base_url="$(output "$BACKEND_STACK" ApiBaseUrl)"
+  parser_url="$(output "$PROJECT_NAME-ai" ParserUrl)"
 
   echo "==> [1/6] Build the frontend (API: $api_base_url)"
   user_pool_id="$(output "$AUTH_STACK" UserPoolId)"
@@ -22,6 +23,7 @@ main() {
   if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.platform' 2>/dev/null)" = linux ]; then
     (cd frontend && npm ci && \
       VITE_API_URL="$api_base_url" \
+      VITE_PARSER_URL="$parser_url" \
       COGNITO_USER_POOL_ID="$user_pool_id" \
       COGNITO_CLIENT_ID="$user_pool_client_id" \
       COGNITO_DOMAIN="$cognito_domain" \
@@ -33,6 +35,7 @@ main() {
       --volume "$PWD/frontend:/app" \
       --workdir /app \
       --env "VITE_API_URL=$api_base_url" \
+      --env "VITE_PARSER_URL=$parser_url" \
       --env "COGNITO_USER_POOL_ID=$user_pool_id" \
       --env "COGNITO_CLIENT_ID=$user_pool_client_id" \
       --env "COGNITO_DOMAIN=$cognito_domain" \
@@ -77,6 +80,7 @@ main() {
   custom_url="$(output "$FRONTEND_STACK" CustomDomainUrl)"
   [ -z "$custom_url" ] || echo "     $custom_url"
   echo "API: $api_base_url/api"
+  echo "Agenda parser: $parser_url"
   if [ -n "${DOMAIN_NAME:-}" ] && [ "$custom_url" != "https://$DOMAIN_NAME" ]; then
     echo
     echo "DOMAIN_NAME=$DOMAIN_NAME in .env is not attached yet; run make add-domain."

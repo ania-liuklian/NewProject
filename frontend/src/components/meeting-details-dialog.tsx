@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { ClockIcon, MapPinIcon, PencilIcon, Trash2Icon, UsersIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { AgendaEditor } from '@/components/agenda-editor'
 import {
   Dialog,
   DialogContent,
@@ -73,6 +74,8 @@ export function MeetingDetailsDialog({ meeting, open, onOpenChange, onEdit, onDe
                   </p>
                 </>
               )}
+
+              <AgendaEditor key={meeting.id} meeting={meeting} />
 
               <div className="hairline" />
               <div className="flex flex-col gap-3">

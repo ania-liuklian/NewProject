@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://meetings:meetings@localhost:5432/meetings"
+    parser_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    cloudflare_account_id: str = ""
+    cloudflare_api_token: str = ""
+    aws_region: str = "us-east-1"
     # Lambda serves one request per instance at a time, so it runs with a pool of 1.
     db_pool_size: int = 5
     db_max_overflow: int = 10

@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from pydantic import (
@@ -7,6 +7,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     EmailStr,
+    Field,
     StringConstraints,
     field_serializer,
     model_validator,
@@ -62,12 +63,39 @@ class MeetingCreate(BaseModel):
         return self
 
 
+class AgendaItem(BaseModel):
+    topic: Annotated[NonEmptyStr, StringConstraints(max_length=500)]
+    owner: Annotated[str, StringConstraints(max_length=255)] | None = None
+    minutes: int | None = Field(default=None, ge=1, le=480)
+
+
+class ActionItem(BaseModel):
+    task: Annotated[NonEmptyStr, StringConstraints(max_length=1000)]
+    owner: Annotated[str, StringConstraints(max_length=255)] | None = None
+    due: date | None = None
+
+
+class ParsedAgenda(BaseModel):
+    title: str | None = None
+    starts_at: str | None = Field(default=None, max_length=64)
+    duration_minutes: int | None = Field(default=None, ge=1, le=600)
+    items: list[AgendaItem]
+    action_items: list[ActionItem] = []
+    language: Annotated[str, StringConstraints(min_length=2, max_length=10)]
+
+
+class AgendaSave(BaseModel):
+    agenda: ParsedAgenda
+    parser_suggestion: dict | None = None
+
+
 class MeetingRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     title: str
     description: str
+    agenda: ParsedAgenda | None = None
     starts_at: datetime
     ends_at: datetime
     place: str
