@@ -54,19 +54,59 @@ Everything is described with Terraform in [`infra/`](infra/) and deployed to `us
 - **Frontend** (`infra/modules/frontend`): the app, built with `VITE_API_URL` set to the function URL, in a private S3 bucket behind CloudFront on **pay-as-you-go** pricing (`PriceClass_100`). The browser calls the function URL directly; the CloudFront address (and custom domain) are the backend's CORS origins. It is rebuilt and uploaded only when its sources or settings change.
 - **Auth** (`infra/modules/auth`): the Cognito user pool and app client.
 
-1. In HCP Terraform, create an organization and a workspace named like `PROJECT_NAME` (CLI-driven workflow), and set the workspace's **Settings → General → Execution Mode** to **Local**: plans and applies run on your machine (they build the Docker image and the frontend), only the state is stored in HCP Terraform.
-2. Put into `.env` the AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) and the HCP Terraform settings (`TF_TOKEN_app_terraform_io`, `TF_CLOUD_ORGANIZATION`, optionally `TF_WORKSPACE`); see `.env.example`. `.env` is gitignored.
-3. `make tf-init` once, then `make deploy`. It shows the plan, applies it after you confirm, writes the Cognito ids to `.env` (for local runs) and prints the app and API URLs. The first run takes about 20 minutes (database and CloudFront distribution). `make plan` only shows the changes.
-4. `make destroy` deletes everything except the Cognito user pool (with its accounts) and a final database snapshot.
+For the course workflow, connect the HCP Terraform workspace to the GitHub repository and the
+branch you submit. Set its working directory to `infra/` and use remote execution. Configure AWS
+dynamic credentials (OIDC) for the workspace, and set `google_client_secret`,
+`cloudflare_account_id`, and `cloudflare_api_token` as sensitive workspace variables. Also set
+the report sender/recipient and other non-secret Terraform variables in the workspace. Do not
+commit `.env`, Terraform state, or secret values.
 
-Requires Terraform, Docker, Node.js and the AWS CLI. `make infra-lint` checks the configuration.
+The Terraform configuration uses local provisioners to build/push the backend image and build/
+upload the frontend. If those provisioners need to run in a remote apply, configure an HCP agent
+with Docker, Node.js, and AWS CLI access, or move those build/upload steps into a CI pipeline.
+For the lab's small tag/log-retention change, make sure the plan does not trigger those
+provisioners.
+
+`make tf-init` connects local Terraform CLI operations to the HCP state. `make infra-plan` is a
+read-only preview. There is deliberately no `terraform apply` target in the Makefile: review PR
+plans and apply from the HCP run page after merge.
+
+### Labs 4–6 CloudFormation to Terraform migration
+
+The Terraform root module now describes Cognito, weekly reports, and the agenda parser; the
+older `auth.yaml`, `reports.yaml`, and `ai.yml` are kept only for the safe Retain-and-import
+transition. First deploy those templates once with `DeletionPolicy: Retain` and
+`UpdateReplacePolicy: Retain`, then delete their CloudFormation stacks so AWS retains the
+resources. Import each retained resource into the matching Terraform address in HCP Terraform.
+Keep correcting configuration until the import plan shows imports only (zero adds, changes,
+or destroys). Apply that plan in HCP, run a new plan, and confirm it ends with:
+
+```text
+No changes. Your infrastructure matches the configuration.
+```
+
+The resource IDs are account-specific; see [the import checklist](docs/terraform-imports.md).
+After the clean plan, remove the temporary CloudFormation templates and import blocks. Never
+apply a plan that replaces the Cognito user pool or reports bucket.
+
+The current Terraform root also declares the backend/database and frontend. If those resources
+already exist, they too must be imported (or kept in a separate CloudFormation-managed root)
+before applying the full root; otherwise the plan can propose duplicate infrastructure.
+
+For the screenshot, open a PR with a harmless Terraform change, review the HCP speculative plan
+check, merge it, then open the VCS-triggered run in HCP Terraform. When it says `Apply finished`,
+capture the run page with its commit/trigger visible. The final plan output is a separate artifact
+from immediately after import.
+
+Requires Terraform, Docker, Node.js and the AWS CLI. `make infra-lint` checks formatting and
+configuration.
 
 ### Cognito sign-in and Google OAuth
 
 `/login` immediately redirects signed-out visitors to **Amazon Cognito Managed Login**. Cognito
 provides email/password sign-in, self sign-up and (when configured) Google sign-in. After
 authentication Cognito returns to `/login`; the app reads the ID token and sends the user to
-their meetings. Self sign-up is explicitly enabled in `infra/auth.yaml`.
+their meetings. Self sign-up is explicitly enabled in the Cognito Terraform module.
 
 #### Create and publish the Google OAuth app
 
@@ -113,14 +153,9 @@ their meetings. Self sign-up is explicitly enabled in `infra/auth.yaml`.
 
 1. Configure the AWS values in `.env` as described above in **Deploy to AWS**. The same
    `PROJECT_NAME` and `AWS_REGION` determine the Cognito domain used in Google's redirect URI.
-2. Run `make deploy-auth`. This creates the user pool, email/password app client, Cognito domain,
-   Managed Login v2 branding, and Google identity provider, then writes the public Cognito settings
-   to `.env`. The deploy output should say `Google sign-in: enabled` and
-   `COGNITO_GOOGLE_ENABLED=true`.
-3. Run `make deploy` to deploy the backend and frontend. The frontend deploy adds the resulting
-   CloudFront URL (and any configured custom domain) to Cognito's allowed callback URLs. Open
-   `https://<your-site>/login`; Cognito should show email/password, a sign-up option, and **Continue
-   with Google**. After sign-in the app header shows the user's email.
+2. Apply infrastructure changes through the reviewed HCP Terraform workspace run. The Terraform
+   outputs contain the Cognito IDs/domain; copy the public values to `.env` for local frontend
+   development when needed.
 
 Google's callback is always the Cognito domain's `/oauth2/idpresponse`; Cognito's app-client
 callback is the site URL plus `/login`. These are two different redirects, and both must be
@@ -128,14 +163,14 @@ configured at their respective providers.
 
 ### Custom domain
 
-Set the domain in `.env` and run `make deploy`:
+Set `domain_name` and `hosted_zone_id` in the HCP workspace variables:
 
 ```sh
 DOMAIN_NAME=app.example.com
 HOSTED_ZONE_ID=Z0123456789ABC   # optional: only if the domain's DNS is in Route 53
 ```
 
-This requests an ACM certificate in `us-east-1` (the only region CloudFront accepts) and adds the domain to the CloudFront distribution, the backend's CORS origins and Cognito's redirect URLs. With `HOSTED_ZONE_ID`, the validation and alias records are created in Route 53. Without it, `make deploy` first prints the validation CNAME to add at your DNS provider, waits for the certificate, and at the end prints the CNAME that points the domain at CloudFront. To remove or switch the domain, change `DOMAIN_NAME` and run `make deploy` again.
+This requests an ACM certificate in `us-east-1` (the only region CloudFront accepts) and adds the domain to the CloudFront distribution, backend CORS origins, and Cognito redirect URLs. With `hosted_zone_id`, validation and alias records are created in Route 53. Without it, add the validation CNAME at your DNS provider when the HCP run pauses. Submit domain changes through the reviewed HCP workspace workflow.
 
 ### Tags
 

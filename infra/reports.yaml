@@ -22,6 +22,8 @@ Parameters:
 Resources:
   ReportsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     DependsOn: MailerInvokePermission
     Properties:
       BucketName: !Sub ${ProjectName}-reports-${AWS::AccountId}
@@ -53,6 +55,8 @@ Resources:
 
   ReportsDlq:
     Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       QueueName: !Sub ${ProjectName}-report-requests-dlq
       MessageRetentionPeriod: 1209600
@@ -62,6 +66,8 @@ Resources:
 
   ReportsQueue:
     Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       QueueName: !Sub ${ProjectName}-report-requests
       VisibilityTimeout: 360
@@ -74,6 +80,8 @@ Resources:
 
   BuilderLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-report-builder
       RetentionInDays: 14
@@ -83,6 +91,8 @@ Resources:
 
   BuilderRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -109,6 +119,8 @@ Resources:
 
   BuilderFunction:
     Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Sub ${ProjectName}-report-builder
       PackageType: Image
@@ -150,6 +162,8 @@ Resources:
 
   QueueToBuilder:
     Type: AWS::Lambda::EventSourceMapping
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       EventSourceArn: !GetAtt ReportsQueue.Arn
       FunctionName: !Ref BuilderFunction
@@ -158,6 +172,8 @@ Resources:
 
   ScheduleRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -179,6 +195,8 @@ Resources:
 
   WeeklySchedule:
     Type: AWS::Scheduler::Schedule
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Name: !Sub ${ProjectName}-weekly-report
       Description: Queue the previous ISO week's meetings report every Monday at 07:00 Kyiv time.
@@ -194,6 +212,8 @@ Resources:
 
   MailerLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-report-mailer
       RetentionInDays: 14
@@ -203,6 +223,8 @@ Resources:
 
   MailerRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -230,6 +252,8 @@ Resources:
 
   MailerFunction:
     Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Sub ${ProjectName}-report-mailer
       PackageType: Image
@@ -254,6 +278,8 @@ Resources:
 
   MailerInvokePermission:
     Type: AWS::Lambda::Permission
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref MailerFunction
       Action: lambda:InvokeFunction

@@ -7,7 +7,7 @@ s ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
-	dev-backend dev-frontend install clean tf-init plan deploy cognito-env destroy infra-lint
+	dev-backend dev-frontend install clean tf-init infra-plan infra-lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -84,45 +84,16 @@ TF_ENV := AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" AWS_SECRET_ACCESS_KEY="$(AWS_
 	TF_VAR_project_name="$(or $(PROJECT_NAME),meetings)" TF_VAR_aws_region="$(AWS_REGION)" \
 	TF_VAR_lambda_memory="$(or $(LAMBDA_MEMORY),512)" TF_VAR_extra_cors_origins="$(CORS_ORIGINS_AWS)" \
 	TF_VAR_domain_name="$(DOMAIN_NAME)" TF_VAR_hosted_zone_id="$(HOSTED_ZONE_ID)" \
-	TF_VAR_google_client_id="$(GOOGLE_CLIENT_ID)" TF_VAR_google_client_secret="$(GOOGLE_CLIENT_SECRET)"
-COGNITO_KEYS := COGNITO_USER_POOL_ID COGNITO_CLIENT_ID COGNITO_DOMAIN COGNITO_GOOGLE_ENABLED
+	TF_VAR_google_client_id="$(GOOGLE_CLIENT_ID)" TF_VAR_google_client_secret="$(GOOGLE_CLIENT_SECRET)" \
+	TF_VAR_reports_email_from="$(REPORTS_EMAIL_FROM)" TF_VAR_reports_email_to="$(REPORTS_EMAIL_TO)" \
+	TF_VAR_cloudflare_account_id="$(CLOUDFLARE_ACCOUNT_ID)" TF_VAR_cloudflare_api_token="$(CLOUDFLARE_API_TOKEN)" \
+	TF_VAR_parser_model="$(PARSER_MODEL)" TF_VAR_alert_email="$(REPORTS_EMAIL_TO)"
 
 tf-init: env ## Connect infra/ to its HCP Terraform workspace and install the providers
 	@$(TF) init
 
-plan: env ## Show what make deploy would change on AWS
+infra-plan: env ## Preview Terraform changes; apply reviewed changes through HCP Terraform
 	@$(TF) plan
-
-deploy: env ## Deploy the whole app to AWS (Terraform: infra, backend image, frontend upload)
-ifneq ($(and $(DOMAIN_NAME),$(if $(HOSTED_ZONE_ID),,1)),)
-	@# Without Route 53 the apply waits for a DNS record that is known only once the certificate exists.
-	@$(TF) apply -auto-approve -target=module.frontend.aws_acm_certificate.this
-	@echo "Add this DNS record at your DNS provider (if not done yet); the deploy waits for it:"
-	@echo "  $$($(TF) output -raw certificate_validation_record)"
-endif
-	@$(TF) apply
-	@$(MAKE) --no-print-directory cognito-env
-	@echo "App:  $$($(TF) output -raw app_url) $$($(TF) output -raw custom_domain_url 2>/dev/null)"
-	@echo "API:  $$($(TF) output -raw api_url)"
-	@echo "Docs: $$($(TF) output -raw docs_url)"
-ifneq ($(and $(DOMAIN_NAME),$(if $(HOSTED_ZONE_ID),,1)),)
-	@echo "Point the domain at CloudFront: CNAME $(DOMAIN_NAME) -> $$($(TF) output -raw distribution_domain)"
-endif
-
-cognito-env: ## Write the Cognito settings (public ids) from the deployment to .env for local runs
-	@for key in $(COGNITO_KEYS); do \
-		value="$$($(TF) output -raw "$$(echo $$key | tr A-Z a-z)")" || exit 1; \
-		grep -v "^$$key=" .env > .env.tmp; echo "$$key=$$value" >> .env.tmp; mv .env.tmp .env; \
-	done
-	@echo "Wrote $(COGNITO_KEYS) to .env"
-
-destroy: env ## Delete the app from AWS (keeps the Cognito user pool and a final DB snapshot)
-	@# The pool holds every account: dropping it from the state keeps it (and its prevent_destroy).
-	@if $(TF) state list | grep -qx module.auth.aws_cognito_user_pool.this; then \
-		echo "Keeping user pool $$($(TF) output -raw cognito_user_pool_id); delete it with aws cognito-idp delete-user-pool"; \
-		$(TF) state rm module.auth.aws_cognito_user_pool.this; \
-	fi
-	@$(TF) destroy
 
 infra-lint: ## Check formatting and validate the Terraform configuration
 	terraform -chdir=infra fmt -check -recursive

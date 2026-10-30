@@ -34,6 +34,7 @@ data "aws_region" "current" {}
 # removes it from the state first so it is kept (see infra/destroy.sh).
 resource "aws_cognito_user_pool" "this" {
   name = "${var.project_name}-users"
+  user_pool_tier = "ESSENTIALS"
 
   # Users sign in with their email; Cognito emails a code to verify it.
   username_attributes      = ["email"]
@@ -49,6 +50,10 @@ resource "aws_cognito_user_pool" "this" {
     case_sensitive = false
   }
 
+  admin_create_user_config {
+    allow_admin_create_user_only = false
+  }
+
   schema {
     name                = "email"
     attribute_data_type = "String"
@@ -59,6 +64,13 @@ resource "aws_cognito_user_pool" "this" {
       min_length = 0
       max_length = 2048
     }
+  }
+
+  schema {
+    name                = "name"
+    attribute_data_type = "String"
+    required            = false
+    mutable             = true
   }
 
   # Mirrored by the signup form (frontend/src/pages/signup-page.tsx).
@@ -97,6 +109,7 @@ resource "aws_cognito_user_pool" "this" {
 resource "aws_cognito_user_pool_domain" "this" {
   user_pool_id = aws_cognito_user_pool.this.id
   domain       = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
+  managed_login_version = 2
 }
 
 resource "aws_cognito_identity_provider" "google" {
@@ -145,6 +158,13 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
   callback_urls                        = local.login_urls
   logout_urls                          = local.login_urls
+}
+
+resource "aws_cognito_managed_login_branding" "this" {
+  user_pool_id                = aws_cognito_user_pool.this.id
+  client_id                   = aws_cognito_user_pool_client.web.id
+  use_cognito_provided_values = true
+  depends_on                  = [aws_cognito_user_pool_domain.this]
 }
 
 output "user_pool_id" {

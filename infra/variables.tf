@@ -51,3 +51,35 @@ variable "google_client_secret" {
   default   = ""
   sensitive = true
 }
+
+variable "reports_email_from" {
+  type        = string
+  description = "Verified SES sender address for weekly reports."
+}
+
+variable "reports_email_to" {
+  type        = string
+  description = "Report recipient address (verified too while SES is in sandbox)."
+}
+
+variable "cloudflare_account_id" {
+  type        = string
+  description = "Cloudflare account ID used by the agenda parser."
+  sensitive   = true
+}
+
+variable "cloudflare_api_token" {
+  type        = string
+  description = "Workers AI token used by the agenda parser."
+  sensitive   = true
+}
+
+variable "parser_model" {
+  type    = string
+  default = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Email recipient for the monthly AWS budget alert."
+}

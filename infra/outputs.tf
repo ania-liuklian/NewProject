@@ -40,3 +40,31 @@ output "cognito_domain" {
 output "cognito_google_enabled" {
   value = module.auth.google_enabled
 }
+
+output "reports_bucket" {
+  value = module.reports.bucket_name
+}
+
+output "reports_queue_url" {
+  value = module.reports.queue_url
+}
+
+output "reports_dlq_url" {
+  value = module.reports.dlq_url
+}
+
+output "reports_builder_log_group" {
+  value = module.reports.builder_log_group
+}
+
+output "reports_mailer_log_group" {
+  value = module.reports.mailer_log_group
+}
+
+output "agenda_parser_url" {
+  value = module.ai.parser_url
+}
+
+output "agenda_parser_log_group" {
+  value = module.ai.parser_log_group
+}

@@ -39,6 +39,38 @@ module "backend" {
   cognito_client_id = module.auth.user_pool_client_id
 }
 
+module "reports" {
+  source = "./modules/reports"
+
+  project_name      = var.project_name
+  aws_region        = var.aws_region
+  image_uri         = module.backend.image_uri
+  database_endpoint = module.backend.database_endpoint
+  database_port     = module.backend.database_port
+  database_name     = module.backend.database_name
+  database_user     = module.backend.database_user
+  database_password = module.backend.database_password
+  subnet_ids        = module.backend.private_subnet_ids
+  security_group_id = module.backend.function_security_group_id
+  email_from        = var.reports_email_from
+  email_to          = var.reports_email_to
+}
+
+module "ai" {
+  source = "./modules/ai"
+
+  project_name         = var.project_name
+  aws_region           = var.aws_region
+  image_uri            = module.backend.image_uri
+  cognito_user_pool_id = module.auth.user_pool_id
+  cognito_client_id    = module.auth.user_pool_client_id
+  cors_origins         = distinct(concat(["http://localhost:5173", "http://localhost:3000"], local.app_urls, compact(split(",", replace(var.extra_cors_origins, " ", "")))))
+  parser_model         = var.parser_model
+  cloudflare_account_id = var.cloudflare_account_id
+  cloudflare_api_token  = var.cloudflare_api_token
+  alert_email           = var.alert_email
+}
+
 # ------------------------------------------------------------ Frontend upload
 locals {
   frontend_dir = "${path.root}/../frontend"

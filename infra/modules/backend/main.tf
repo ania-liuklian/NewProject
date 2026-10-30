@@ -332,3 +332,36 @@ resource "aws_lambda_permission" "invoke" {
 output "api_base_url" {
   value = trimsuffix(aws_lambda_function_url.backend.function_url, "/")
 }
+
+output "image_uri" {
+  value = terraform_data.image.output
+}
+
+output "database_endpoint" {
+  value = aws_rds_cluster.this.endpoint
+}
+
+output "database_port" {
+  value = aws_rds_cluster.this.port
+}
+
+output "database_name" {
+  value = local.db_name
+}
+
+output "database_user" {
+  value = local.db_user
+}
+
+output "database_password" {
+  value     = random_id.db_password.hex
+  sensitive = true
+}
+
+output "private_subnet_ids" {
+  value = aws_subnet.private[*].id
+}
+
+output "function_security_group_id" {
+  value = aws_security_group.function.id
+}

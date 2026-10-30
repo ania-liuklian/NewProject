@@ -31,6 +31,8 @@ Parameters:
 Resources:
   ParserLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-agenda-parser
       RetentionInDays: 14
@@ -38,6 +40,8 @@ Resources:
 
   ParserRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -57,6 +61,8 @@ Resources:
 
   ParserFunction:
     Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Sub ${ProjectName}-agenda-parser
       PackageType: Image
@@ -80,6 +86,8 @@ Resources:
 
   ParserUrl:
     Type: AWS::Lambda::Url
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TargetFunctionArn: !Ref ParserFunction
       AuthType: NONE
@@ -91,6 +99,8 @@ Resources:
 
   ParserUrlPermission:
     Type: AWS::Lambda::Permission
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref ParserFunction
       Action: lambda:InvokeFunctionUrl
@@ -99,6 +109,8 @@ Resources:
 
   ParserInvokePermission:
     Type: AWS::Lambda::Permission
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref ParserFunction
       Action: lambda:InvokeFunction
@@ -107,6 +119,8 @@ Resources:
 
   MonthlyBudget:
     Type: AWS::Budgets::Budget
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Budget:
         BudgetName: !Sub ${ProjectName}-monthly-5-dollar-limit
