@@ -1,4 +1,5 @@
 import { signOut } from 'aws-amplify/auth'
+import { format } from 'date-fns'
 
 import { getIdToken } from '@/lib/auth'
 
@@ -12,24 +13,12 @@ export type Meeting = {
   id: string
   title: string
   description: string
-  agenda: ParsedAgenda | null
   starts_at: string
   ends_at: string
   place: string
   participants: Participant[]
   created_at: string
 }
-
-export type ParsedAgenda = {
-  title: string | null
-  starts_at: string | null
-  duration_minutes: number | null
-  items: { topic: string; owner: string | null; minutes: number | null }[]
-  action_items: { task: string; owner: string | null; due: string | null }[]
-  language: string
-}
-
-export type AgendaSuggestion = { agenda: ParsedAgenda; model: string; prompt_version: string }
 
 export type MeetingCreate = {
   title: string
@@ -38,6 +27,21 @@ export type MeetingCreate = {
   ends_at: string
   place: string
   participant_ids: string[]
+}
+
+/** Meeting form values guessed from text or speech; the user reviews them before saving. */
+export type MeetingDraft = {
+  transcript: string
+  title: string | null
+  description: string | null
+  /** yyyy-MM-dd */
+  date: string | null
+  /** HH:mm, local time */
+  start_time: string | null
+  end_time: string | null
+  place: string | null
+  participant_ids: string[]
+  unmatched_participants: string[]
 }
 
 export type ParticipantCreate = {
@@ -57,7 +61,6 @@ export class ApiError extends Error {
 // Backend origin, set at build time for AWS (the Lambda function URL). Empty locally,
 // where the Vite dev server or nginx proxies /api to the backend.
 const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
-const PARSER_URL = (import.meta.env.VITE_PARSER_URL ?? '').replace(/\/+$/, '')
 
 type ValidationIssue = { loc?: (string | number)[]; msg: string }
 
@@ -80,7 +83,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}/api${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      // The browser sets a multipart Content-Type (with its boundary) for FormData itself.
+      ...(!(init?.body instanceof FormData) && { 'Content-Type': 'application/json' }),
       ...(token && { Authorization: `Bearer ${token}` }),
       ...init?.headers,
     },
@@ -104,6 +108,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+/** The user's wall-clock time, so the assistant resolves "tomorrow at 3" in their time zone. */
+function localNow(): string {
+  return format(new Date(), "yyyy-MM-dd'T'HH:mm:ss")
+}
+
+function audioForm(audio: Blob): FormData {
+  const form = new FormData()
+  form.append('audio', audio, 'recording')
+  form.append('now', localNow())
+  return form
+}
+
 export const api = {
   listMeetings: () => request<Meeting[]>('/meetings'),
   createMeeting: (data: MeetingCreate) =>
@@ -111,28 +127,13 @@ export const api = {
   updateMeeting: ({ id, ...data }: MeetingCreate & { id: string }) =>
     request<Meeting>(`/meetings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteMeeting: (id: string) => request<void>(`/meetings/${id}`, { method: 'DELETE' }),
-  parseAgenda: async (text: string, signal: AbortSignal): Promise<AgendaSuggestion> => {
-    if (!PARSER_URL) throw new ApiError(503, 'Agenda parser URL is not configured.')
-    const token = await getIdToken()
-    const todayParts = new Intl.DateTimeFormat('en', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(new Date())
-    const today = `${todayParts.find((part) => part.type === 'year')?.value}-${todayParts.find((part) => part.type === 'month')?.value}-${todayParts.find((part) => part.type === 'day')?.value}`
-    const response = await fetch(PARSER_URL, {
-      method: 'POST', signal,
-      headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
-      body: JSON.stringify({ text, today, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-    })
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({})) as { error?: string }
-      throw new ApiError(response.status, body.error ?? response.statusText)
-    }
-    return response.json() as Promise<AgendaSuggestion>
-  },
-  saveAgenda: (id: string, agenda: ParsedAgenda, parser_suggestion?: AgendaSuggestion) =>
-    request<Meeting>(`/meetings/${id}/agenda`, {
-      method: 'PUT', body: JSON.stringify({ agenda, parser_suggestion }),
+  draftMeetingFromText: (text: string) =>
+    request<MeetingDraft>('/meeting-drafts/text', {
+      method: 'POST',
+      body: JSON.stringify({ text, now: localNow() }),
     }),
+  draftMeetingFromAudio: (audio: Blob) =>
+    request<MeetingDraft>('/meeting-drafts/audio', { method: 'POST', body: audioForm(audio) }),
   listParticipants: () => request<Participant[]>('/participants'),
   createParticipant: (data: ParticipantCreate) =>
     request<Participant>('/participants', { method: 'POST', body: JSON.stringify(data) }),

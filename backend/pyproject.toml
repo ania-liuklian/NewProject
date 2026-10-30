@@ -9,9 +9,11 @@ dependencies = [
     "boto3>=1.42.0",
     "awslambdaric>=3.1.1",
     "fastapi>=0.141.1",
+    "openai>=3.29.0",
     "pydantic-settings>=2.15.0",
     "pydantic[email]>=2.13.5",
     "pyjwt[crypto]>=2.15.0",
+    "python-multipart>=0.0.32",
     "sqlalchemy[asyncio]>=2.0.54",
     "uvicorn[standard]>=0.53.0",
 ]
