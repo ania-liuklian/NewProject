@@ -57,40 +57,37 @@ dynamic credentials (OIDC) for the workspace, and set `google_client_secret`,
 the report sender/recipient and other non-secret Terraform variables in the workspace. Do not
 commit `.env`, Terraform state, or secret values.
 
-`make tf-init` connects local Terraform CLI operations to the HCP state. `make infra-plan` is a
-read-only preview. There is deliberately no `terraform apply` target in the Makefile: review PR
-plans and apply from the HCP run page after merge.
+`make tf-init` connects local Terraform CLI operations to the HCP state. `make infra-plan` runs a
+read-only plan against the HCP workspace. There is deliberately no `terraform apply` target in
+the Makefile: apply reviewed, VCS-triggered plans through HCP Terraform.
 
 ### Labs 4–7 infrastructure migration
 
-Cognito, weekly reports, and the agenda parser are described in Terraform modules under
-`infra/modules/`; the former CloudFormation templates have been removed. `infra/imports.tf`
-records the account-specific import IDs for the retained resources. The HCP import run and its
-follow-up clean plan are still required before this migration is complete.
+Cognito, weekly reports, and the agenda parser are configured in the root files
+[`infra/auth.tf`](infra/auth.tf), [`infra/reports.tf`](infra/reports.tf), and
+[`infra/ai.tf`](infra/ai.tf), using modules under `infra/modules/`. The three CloudFormation
+templates were updated with `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain`, then their
+stacks were deleted. Terraform imported the retained resources into HCP state (28 imports, with
+no resource additions, changes, or deletions). The temporary `infra/imports.tf` file was removed
+after the import apply and a clean follow-up plan.
 
-The retained CloudFormation stacks must be deleted only after their resources have
-`DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain` applied. Import each retained resource
-into its matching Terraform address in HCP Terraform. Keep correcting configuration until the
-import plan shows imports only (zero adds, changes, or destroys). Apply that plan in HCP, run a
-new plan, and confirm it ends with:
+The final plan was checked for:
 
 ```text
 No changes. Your infrastructure matches the configuration.
 ```
 
-The resource IDs are account-specific; see [the import checklist](docs/terraform-imports.md).
-After the clean plan, remove `infra/imports.tf`. Never apply a plan that replaces the Cognito
-user pool or reports bucket. Any resources intentionally created fresh instead of imported must
-be deleted from the old stack safely first and recorded in the migration notes.
+The resource IDs used during migration are account-specific; see
+[the import checklist](docs/terraform-imports.md). Never apply a plan that replaces the Cognito
+user pool or reports bucket.
 
 The migration root deliberately leaves the backend/database, frontend, network and ECR stacks
 in CloudFormation and reads their outputs as data. The HCP workspace's `aws_region` must match
-the region in `infra/imports.tf` (`eu-central-1` for the current IDs).
+the region where these resources are deployed (`eu-central-1`).
 
-For the screenshot, open a PR with a harmless Terraform change, review the HCP speculative plan
-check, merge it, then open the VCS-triggered run in HCP Terraform. When it says `Apply finished`,
-capture the run page with its commit/trigger visible. The final plan output is a separate artifact
-from immediately after import.
+For the screenshot, use a successful HCP run triggered by a push or merge, not a CLI-only plan.
+Capture the run page with the VCS commit or trigger visible and the apply stage finished. The
+final clean plan output is a separate submission artifact.
 
 Requires Terraform and AWS credentials through HCP dynamic credentials. `make infra-lint` checks
 formatting and configuration.

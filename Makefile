@@ -92,7 +92,7 @@ TF_ENV := AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" AWS_SECRET_ACCESS_KEY="$(AWS_
 tf-init: env ## Connect infra/ to its HCP Terraform workspace and install the providers
 	@$(TF) init
 
-infra-plan: env ## Preview Terraform changes; apply reviewed changes through HCP Terraform
+infra-plan: env ## Run a read-only plan against the HCP Terraform workspace
 	@$(TF) plan
 
 infra-output: env ## Read a root-module output: make infra-output name=api_url
