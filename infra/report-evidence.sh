@@ -2,14 +2,13 @@
 # Prints the S3 reports listing and one CloudWatch trigger line for each lab trigger.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-source infra/common.sh
-
-REPORTS_STACK="$PROJECT_NAME-reports"
-bucket="$(output "$REPORTS_STACK" ReportsBucket)"
-if [ -z "$bucket" ] || [ "$bucket" = "None" ]; then
-  echo "Reports stack not found; run make deploy-reports first." >&2
-  exit 1
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
+bucket="$(terraform -chdir=infra output -raw reports_bucket)"
 
 start_time_ms="$(( $(date -u -d '14 days ago' +%s) * 1000 ))"
 builder_group="/aws/lambda/$PROJECT_NAME-report-builder"

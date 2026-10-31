@@ -7,7 +7,7 @@ s ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
-	dev-backend dev-frontend install clean tf-init infra-plan infra-lint
+	dev-backend dev-frontend install clean tf-init infra-plan infra-output infra-lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -94,6 +94,10 @@ tf-init: env ## Connect infra/ to its HCP Terraform workspace and install the pr
 
 infra-plan: env ## Preview Terraform changes; apply reviewed changes through HCP Terraform
 	@$(TF) plan
+
+infra-output: env ## Read a root-module output: make infra-output name=api_url
+	@test -n "$(name)" || (echo 'Usage: make infra-output name=api_url' && exit 1)
+	@$(TF) output -raw "$(name)"
 
 infra-lint: ## Check formatting and validate the Terraform configuration
 	terraform -chdir=infra fmt -check -recursive

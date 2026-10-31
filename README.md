@@ -48,11 +48,7 @@ make dev-frontend   # Vite on :5173, proxies /api to :8000
 
 ## Deploy to AWS
 
-Everything is described with Terraform in [`infra/`](infra/) and deployed to `us-east-1` by default (`AWS_REGION` in `.env`). The state is stored in [HCP Terraform](https://app.terraform.io):
-
-- **Backend** (`infra/modules/backend`): the backend container on AWS Lambda (via [Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter), so the FastAPI app runs unchanged), exposed through a public **Lambda function URL**, and its PostgreSQL 17 database on **Aurora Serverless v2 scaling between 0 and 1 ACU**. After 5 idle minutes the database pauses and costs only storage; the first request after that waits about 15 seconds while it resumes. The function runs in the database's private subnets; there is no NAT gateway, load balancer or public IP. The image is tagged with a hash of the backend sources and rebuilt only when they change.
-- **Frontend** (`infra/modules/frontend`): the app, built with `VITE_API_URL` set to the function URL, in a private S3 bucket behind CloudFront on **pay-as-you-go** pricing (`PriceClass_100`). The browser calls the function URL directly; the CloudFront address (and custom domain) are the backend's CORS origins. It is rebuilt and uploaded only when its sources or settings change.
-- **Auth** (`infra/modules/auth`): the Cognito user pool and app client.
+The existing backend, database, frontend, network and ECR stacks remain managed by CloudFormation. The Terraform root in [`infra/`](infra/) is the Lab 7 migration root: it adopts Cognito, weekly reports and the agenda parser. It reads the existing backend/frontend stack outputs, deployed Lambda image URIs and database password from SSM so those resources stay in place. The Terraform state is stored in [HCP Terraform](https://app.terraform.io).
 
 For the course workflow, connect the HCP Terraform workspace to the GitHub repository and the
 branch you submit. Set its working directory to `infra/` and use remote execution. Configure AWS
@@ -61,45 +57,43 @@ dynamic credentials (OIDC) for the workspace, and set `google_client_secret`,
 the report sender/recipient and other non-secret Terraform variables in the workspace. Do not
 commit `.env`, Terraform state, or secret values.
 
-The Terraform configuration uses local provisioners to build/push the backend image and build/
-upload the frontend. If those provisioners need to run in a remote apply, configure an HCP agent
-with Docker, Node.js, and AWS CLI access, or move those build/upload steps into a CI pipeline.
-For the lab's small tag/log-retention change, make sure the plan does not trigger those
-provisioners.
-
 `make tf-init` connects local Terraform CLI operations to the HCP state. `make infra-plan` is a
 read-only preview. There is deliberately no `terraform apply` target in the Makefile: review PR
 plans and apply from the HCP run page after merge.
 
-### Labs 4–6 CloudFormation to Terraform migration
+### Labs 4–7 infrastructure migration
 
-The Terraform root module now describes Cognito, weekly reports, and the agenda parser; the
-older `auth.yaml`, `reports.yaml`, and `ai.yml` are kept only for the safe Retain-and-import
-transition. First deploy those templates once with `DeletionPolicy: Retain` and
-`UpdateReplacePolicy: Retain`, then delete their CloudFormation stacks so AWS retains the
-resources. Import each retained resource into the matching Terraform address in HCP Terraform.
-Keep correcting configuration until the import plan shows imports only (zero adds, changes,
-or destroys). Apply that plan in HCP, run a new plan, and confirm it ends with:
+Cognito, weekly reports, and the agenda parser are described in Terraform modules under
+`infra/modules/`; the former CloudFormation templates have been removed. `infra/imports.tf`
+records the account-specific import IDs for the retained resources. The HCP import run and its
+follow-up clean plan are still required before this migration is complete.
+
+The retained CloudFormation stacks must be deleted only after their resources have
+`DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain` applied. Import each retained resource
+into its matching Terraform address in HCP Terraform. Keep correcting configuration until the
+import plan shows imports only (zero adds, changes, or destroys). Apply that plan in HCP, run a
+new plan, and confirm it ends with:
 
 ```text
 No changes. Your infrastructure matches the configuration.
 ```
 
 The resource IDs are account-specific; see [the import checklist](docs/terraform-imports.md).
-After the clean plan, remove the temporary CloudFormation templates and import blocks. Never
-apply a plan that replaces the Cognito user pool or reports bucket.
+After the clean plan, remove `infra/imports.tf`. Never apply a plan that replaces the Cognito
+user pool or reports bucket. Any resources intentionally created fresh instead of imported must
+be deleted from the old stack safely first and recorded in the migration notes.
 
-The current Terraform root also declares the backend/database and frontend. If those resources
-already exist, they too must be imported (or kept in a separate CloudFormation-managed root)
-before applying the full root; otherwise the plan can propose duplicate infrastructure.
+The migration root deliberately leaves the backend/database, frontend, network and ECR stacks
+in CloudFormation and reads their outputs as data. The HCP workspace's `aws_region` must match
+the region in `infra/imports.tf` (`eu-central-1` for the current IDs).
 
 For the screenshot, open a PR with a harmless Terraform change, review the HCP speculative plan
 check, merge it, then open the VCS-triggered run in HCP Terraform. When it says `Apply finished`,
 capture the run page with its commit/trigger visible. The final plan output is a separate artifact
 from immediately after import.
 
-Requires Terraform, Docker, Node.js and the AWS CLI. `make infra-lint` checks formatting and
-configuration.
+Requires Terraform and AWS credentials through HCP dynamic credentials. `make infra-lint` checks
+formatting and configuration.
 
 ### Cognito sign-in and Google OAuth
 

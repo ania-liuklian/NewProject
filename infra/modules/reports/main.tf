@@ -24,7 +24,7 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  bucket_name = "${var.project_name}-reports-${data.aws_caller_identity.current.account_id}"
+  bucket_name  = "${var.project_name}-reports-${data.aws_caller_identity.current.account_id}"
   database_url = "postgresql+asyncpg://${var.database_user}:${var.database_password}@${var.database_endpoint}:${var.database_port}/${var.database_name}"
 }
 
@@ -54,11 +54,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "reports" {
 resource "aws_sqs_queue" "reports_dlq" {
   name                      = "${var.project_name}-report-requests-dlq"
   message_retention_seconds = 1209600
+  max_message_size          = 1048576
 }
 
 resource "aws_sqs_queue" "reports" {
   name                       = "${var.project_name}-report-requests"
   visibility_timeout_seconds = 360
+  max_message_size           = 1048576
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.reports_dlq.arn
     maxReceiveCount     = 3
@@ -146,6 +148,7 @@ resource "aws_lambda_function" "builder" {
   memory_size   = 512
   timeout       = 60
   role          = aws_iam_role.builder.arn
+  publish       = false
 
   image_config {
     entry_point = ["python", "-m", "awslambdaric"]
@@ -155,7 +158,10 @@ resource "aws_lambda_function" "builder" {
     subnet_ids         = var.subnet_ids
     security_group_ids = [var.security_group_id]
   }
-  logging_config { log_group = aws_cloudwatch_log_group.builder.name }
+  logging_config {
+    log_group  = aws_cloudwatch_log_group.builder.name
+    log_format = "Text"
+  }
   environment {
     variables = {
       DATABASE_URL    = local.database_url
@@ -163,6 +169,12 @@ resource "aws_lambda_function" "builder" {
       DB_MAX_OVERFLOW = "0"
       REPORTS_BUCKET  = aws_s3_bucket.reports.id
     }
+  }
+
+  # Do not re-send the sensitive database URL as part of an import-only run. Remove this
+  # temporary ignore after the builder has been imported into state.
+  lifecycle {
+    ignore_changes = [environment[0].variables["DATABASE_URL"]]
   }
 }
 
@@ -174,12 +186,16 @@ resource "aws_lambda_function" "mailer" {
   memory_size   = 256
   timeout       = 30
   role          = aws_iam_role.mailer.arn
+  publish       = false
 
   image_config {
     entry_point = ["python", "-m", "awslambdaric"]
     command     = ["app.reports.mailer.handler"]
   }
-  logging_config { log_group = aws_cloudwatch_log_group.mailer.name }
+  logging_config {
+    log_group  = aws_cloudwatch_log_group.mailer.name
+    log_format = "Text"
+  }
   environment {
     variables = {
       REPORTS_EMAIL_FROM = var.email_from
@@ -231,16 +247,16 @@ resource "aws_scheduler_schedule" "weekly" {
   target {
     arn      = aws_sqs_queue.reports.arn
     role_arn = aws_iam_role.scheduler.arn
-    input    = jsonencode({ week = null, source = "schedule" })
+    input    = "{\"week\":null,\"source\":\"schedule\"}"
   }
 }
 
 resource "aws_lambda_permission" "bucket_invoke_mailer" {
-  statement_id  = "AllowS3Invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.mailer.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = aws_s3_bucket.reports.arn
+  statement_id   = "new-project-reports-MailerInvokePermission-G2CCVhIg9jBW"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.mailer.function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = aws_s3_bucket.reports.arn
   source_account = data.aws_caller_identity.current.account_id
 }
 

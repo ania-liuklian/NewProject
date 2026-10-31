@@ -3,13 +3,9 @@
 The IDs below are read from the AWS account that owns the existing stacks. Do not guess them.
 The Terraform addresses are the destinations declared in the current configuration.
 
-**Important:** the current `infra/main.tf` also manages the backend/database and frontend
-modules. If those resources already exist in AWS, they must also be adopted into this workspace
-before a full-root plan can say `No changes`; otherwise Terraform will plan to create them. This
-assignment's hand-in focuses on Cognito, reports, and AI, but do not apply a full-root plan that
-would duplicate the currently deployed API/database/site. Either import every existing resource
-in the root configuration or use a separate root module that leaves the other stacks as
-CloudFormation, as the lab specifies.
+The migration root manages only Cognito, reports, and AI. The existing backend/database,
+frontend, network, and ECR stacks remain CloudFormation-managed and are read through data sources
+or direct Lambda lookups. Do not import those stacks into this migration workspace.
 
 ## Cognito
 

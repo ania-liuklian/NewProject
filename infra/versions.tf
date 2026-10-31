@@ -5,8 +5,13 @@
 terraform {
   required_version = ">= 1.10"
 
-  cloud {}
+  cloud {
+    organization = "_NewProject"
 
+    workspaces {
+      name = "newproject-infra"
+    }
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -26,16 +31,6 @@ terraform {
 # Every resource that supports tags is tagged PROJECT_NAME=<project_name>.
 provider "aws" {
   region = var.aws_region
-
-  default_tags {
-    tags = { PROJECT_NAME = var.project_name }
-  }
-}
-
-# CloudFront only accepts ACM certificates from us-east-1.
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
 
   default_tags {
     tags = { PROJECT_NAME = var.project_name }

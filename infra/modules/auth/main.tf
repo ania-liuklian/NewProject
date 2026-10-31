@@ -33,7 +33,7 @@ data "aws_region" "current" {}
 # Deleting the pool deletes every account in it: Terraform refuses to, and make destroy
 # removes it from the state first so it is kept (see infra/destroy.sh).
 resource "aws_cognito_user_pool" "this" {
-  name = "${var.project_name}-users"
+  name           = "${var.project_name}-users"
   user_pool_tier = "ESSENTIALS"
 
   # Users sign in with their email; Cognito emails a code to verify it.
@@ -64,13 +64,6 @@ resource "aws_cognito_user_pool" "this" {
       min_length = 0
       max_length = 2048
     }
-  }
-
-  schema {
-    name                = "name"
-    attribute_data_type = "String"
-    required            = false
-    mutable             = true
   }
 
   # Mirrored by the signup form (frontend/src/pages/signup-page.tsx).
@@ -107,8 +100,8 @@ resource "aws_cognito_user_pool" "this" {
 
 # Hosted domain for the OAuth endpoints (needed for Google). Prefixes are global.
 resource "aws_cognito_user_pool_domain" "this" {
-  user_pool_id = aws_cognito_user_pool.this.id
-  domain       = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
+  user_pool_id          = aws_cognito_user_pool.this.id
+  domain                = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
   managed_login_version = 2
 }
 
@@ -120,15 +113,28 @@ resource "aws_cognito_identity_provider" "google" {
   provider_type = "Google"
 
   provider_details = {
-    client_id        = var.google_client_id
-    client_secret    = var.google_client_secret
-    authorize_scopes = "openid email profile"
+    attributes_url                = "https://people.googleapis.com/v1/people/me?personFields="
+    attributes_url_add_attributes = "true"
+    authorize_scopes              = "openid email profile"
+    authorize_url                 = "https://accounts.google.com/o/oauth2/v2/auth"
+    client_id                     = var.google_client_id
+    client_secret                 = var.google_client_secret
+    oidc_issuer                   = "https://accounts.google.com"
+    token_request_method          = "POST"
+    token_url                     = "https://www.googleapis.com/oauth2/v4/token"
   }
 
   attribute_mapping = {
     email          = "email"
     email_verified = "email_verified"
     name           = "name"
+    username       = "sub"
+  }
+
+  # Terraform must not resend an imported secret during the ownership-only handoff.
+  # Remove this temporary ignore after the resource is in state and rotate the secret.
+  lifecycle {
+    ignore_changes = [provider_details["client_secret"]]
   }
 }
 
@@ -158,6 +164,12 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
   callback_urls                        = local.login_urls
   logout_urls                          = local.login_urls
+
+  # Cognito does not return this flag when reading an imported client. Keep the existing
+  # public client instead of forcing replacement from an unknown state value.
+  lifecycle {
+    ignore_changes = [generate_secret]
+  }
 }
 
 resource "aws_cognito_managed_login_branding" "this" {

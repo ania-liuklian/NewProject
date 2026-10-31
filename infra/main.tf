@@ -1,42 +1,44 @@
-# Meetings app on AWS: the frontend (S3 + CloudFront), Cognito, and the backend (Lambda +
-# Aurora Serverless v2). The frontend comes first because both others need its addresses:
-# Cognito redirects back to it and the API allows it as a CORS origin.
-
-locals {
-  # The CloudFront address and, once attached, the custom domain.
-  app_urls = compact([module.frontend.app_url, module.frontend.custom_domain_url])
+# This root owns only the three stacks being migrated from CloudFormation. The existing
+# network/backend/frontend stacks stay in CloudFormation and are read as data sources.
+data "aws_cloudformation_stack" "backend" {
+  name = "${var.project_name}-backend"
 }
 
-module "frontend" {
-  source = "./modules/frontend"
-  providers = {
-    aws           = aws
-    aws.us_east_1 = aws.us_east_1
-  }
+data "aws_cloudformation_stack" "frontend" {
+  name = "${var.project_name}-frontend"
+}
 
-  project_name   = var.project_name
-  domain_name    = var.domain_name
-  hosted_zone_id = var.hosted_zone_id
+data "aws_ssm_parameter" "database_password" {
+  name            = "/${var.project_name}/db-password"
+  with_decryption = true
+}
+
+# Keep each imported Lambda on its current image during the ownership handoff. The existing
+# report builder and mailer use the same image; the parser was deployed from a later image.
+data "aws_lambda_function" "report_builder" {
+  function_name = "${var.project_name}-report-builder"
+}
+
+data "aws_lambda_function" "parser" {
+  function_name = "${var.project_name}-agenda-parser"
+}
+
+locals {
+  app_urls = compact([
+    data.aws_cloudformation_stack.frontend.outputs["AppUrl"],
+    var.domain_name == "" ? "" : "https://${var.domain_name}",
+  ])
+  browser_origins = concat(["http://localhost:5173", "http://localhost:3000"], local.app_urls)
+  parser_origins  = concat(local.app_urls, compact(split(",", replace(var.extra_cors_origins, " ", ""))))
 }
 
 module "auth" {
   source = "./modules/auth"
 
   project_name         = var.project_name
-  app_urls             = concat(["http://localhost:5173", "http://localhost:3000"], local.app_urls)
+  app_urls             = local.browser_origins
   google_client_id     = var.google_client_id
   google_client_secret = var.google_client_secret
-}
-
-module "backend" {
-  source = "./modules/backend"
-
-  project_name      = var.project_name
-  memory_size       = var.lambda_memory
-  cors_origins      = distinct(concat(local.app_urls, compact(split(",", replace(var.extra_cors_origins, " ", "")))))
-  cognito_issuer    = module.auth.issuer
-  cognito_pool_id   = module.auth.user_pool_id
-  cognito_client_id = module.auth.user_pool_client_id
 }
 
 module "reports" {
@@ -44,14 +46,17 @@ module "reports" {
 
   project_name      = var.project_name
   aws_region        = var.aws_region
-  image_uri         = module.backend.image_uri
-  database_endpoint = module.backend.database_endpoint
-  database_port     = module.backend.database_port
-  database_name     = module.backend.database_name
-  database_user     = module.backend.database_user
-  database_password = module.backend.database_password
-  subnet_ids        = module.backend.private_subnet_ids
-  security_group_id = module.backend.function_security_group_id
+  image_uri         = data.aws_lambda_function.report_builder.image_uri
+  database_endpoint = data.aws_cloudformation_stack.backend.outputs["DatabaseEndpoint"]
+  database_port     = tonumber(data.aws_cloudformation_stack.backend.outputs["DatabasePort"])
+  database_name     = data.aws_cloudformation_stack.backend.outputs["DatabaseName"]
+  database_user     = data.aws_cloudformation_stack.backend.outputs["DatabaseUser"]
+  database_password = data.aws_ssm_parameter.database_password.value
+  subnet_ids = [
+    data.aws_cloudformation_stack.backend.outputs["PrivateSubnetA"],
+    data.aws_cloudformation_stack.backend.outputs["PrivateSubnetB"],
+  ]
+  security_group_id = data.aws_cloudformation_stack.backend.outputs["FunctionSecurityGroup"]
   email_from        = var.reports_email_from
   email_to          = var.reports_email_to
 }
@@ -59,63 +64,14 @@ module "reports" {
 module "ai" {
   source = "./modules/ai"
 
-  project_name         = var.project_name
-  aws_region           = var.aws_region
-  image_uri            = module.backend.image_uri
-  cognito_user_pool_id = module.auth.user_pool_id
-  cognito_client_id    = module.auth.user_pool_client_id
-  cors_origins         = distinct(concat(["http://localhost:5173", "http://localhost:3000"], local.app_urls, compact(split(",", replace(var.extra_cors_origins, " ", "")))))
-  parser_model         = var.parser_model
+  project_name          = var.project_name
+  aws_region            = var.aws_region
+  image_uri             = data.aws_lambda_function.parser.image_uri
+  cognito_user_pool_id  = module.auth.user_pool_id
+  cognito_client_id     = module.auth.user_pool_client_id
+  cors_origins          = distinct(local.parser_origins)
+  parser_model          = var.parser_model
   cloudflare_account_id = var.cloudflare_account_id
   cloudflare_api_token  = var.cloudflare_api_token
   alert_email           = var.alert_email
-}
-
-# ------------------------------------------------------------ Frontend upload
-locals {
-  frontend_dir = "${path.root}/../frontend"
-  # The bundle has the API and Cognito settings baked in.
-  frontend_build_env = {
-    VITE_API_URL           = module.backend.api_base_url
-    COGNITO_USER_POOL_ID   = module.auth.user_pool_id
-    COGNITO_CLIENT_ID      = module.auth.user_pool_client_id
-    COGNITO_DOMAIN         = module.auth.domain
-    COGNITO_GOOGLE_ENABLED = tostring(module.auth.google_enabled)
-  }
-}
-
-# Builds the frontend and uploads it whenever its sources or settings change. Runs on this
-# machine (the HCP workspace uses local execution), so it needs Node.js and the AWS CLI.
-resource "terraform_data" "frontend_upload" {
-  triggers_replace = [
-    local.frontend_build_env,
-    module.frontend.bucket_name,
-    sha1(join("", [
-      for f in sort(setunion(
-        fileset(local.frontend_dir, "{index.html,package-lock.json,vite.config.ts,tsconfig*.json}"),
-        fileset(local.frontend_dir, "{public,src}/**"),
-      )) :
-      "${f}:${filesha1("${local.frontend_dir}/${f}")}"
-    ])),
-  ]
-
-  provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
-    working_dir = local.frontend_dir
-    environment = local.frontend_build_env
-    command     = <<-EOT
-      set -euo pipefail
-      npm ci
-      npm run build
-      # Hashed assets never change, so browsers may cache them forever; everything else is revalidated.
-      aws s3 sync dist/assets 's3://${module.frontend.bucket_name}/assets' --delete \
-        --cache-control 'public, max-age=31536000, immutable'
-      aws s3 sync dist 's3://${module.frontend.bucket_name}' --delete --exclude 'assets/*' \
-        --cache-control 'no-cache'
-      # "/*" counts as a single path against the 1,000 free invalidation paths per month.
-      id="$(aws cloudfront create-invalidation --distribution-id '${module.frontend.distribution_id}' \
-        --paths '/*' --query Invalidation.Id --output text)"
-      aws cloudfront wait invalidation-completed --distribution-id '${module.frontend.distribution_id}' --id "$id"
-    EOT
-  }
 }

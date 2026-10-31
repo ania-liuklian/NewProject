@@ -22,6 +22,7 @@ variable "cloudflare_api_token" {
 variable "alert_email" { type = string }
 
 data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
 
 resource "aws_cloudwatch_log_group" "parser" {
   name              = "/aws/lambda/${var.project_name}-agenda-parser"
@@ -47,7 +48,7 @@ resource "aws_iam_role" "parser" {
       Statement = [{
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:*:log-group:/aws/lambda/${var.project_name}-agenda-parser:*"
+        Resource = "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-agenda-parser:*"
       }]
     })
   }
@@ -61,12 +62,16 @@ resource "aws_lambda_function" "parser" {
   memory_size   = 512
   timeout       = 30
   role          = aws_iam_role.parser.arn
+  publish       = false
 
   image_config {
     entry_point = ["python", "-m", "awslambdaric"]
     command     = ["app.ai.agenda_lambda.handler"]
   }
-  logging_config { log_group = aws_cloudwatch_log_group.parser.name }
+  logging_config {
+    log_group  = aws_cloudwatch_log_group.parser.name
+    log_format = "Text"
+  }
   environment {
     variables = {
       PARSER_MODEL          = var.parser_model
@@ -75,6 +80,15 @@ resource "aws_lambda_function" "parser" {
       COGNITO_USER_POOL_ID  = var.cognito_user_pool_id
       COGNITO_CLIENT_ID     = var.cognito_client_id
     }
+  }
+
+  # Prevent the import run from pushing credentials back to the existing function. Remove
+  # this temporary ignore after import, then rotate the Cloudflare token through Terraform.
+  lifecycle {
+    ignore_changes = [
+      environment[0].variables["CLOUDFLARE_ACCOUNT_ID"],
+      environment[0].variables["CLOUDFLARE_API_TOKEN"],
+    ]
   }
 }
 
@@ -90,7 +104,7 @@ resource "aws_lambda_function_url" "parser" {
 }
 
 resource "aws_lambda_permission" "parser_url" {
-  statement_id           = "FunctionURLAllowPublicAccess"
+  statement_id           = "new-project-ai-ParserUrlPermission-zyQC2ekwOVTC"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.parser.function_name
   principal              = "*"
@@ -98,7 +112,7 @@ resource "aws_lambda_permission" "parser_url" {
 }
 
 resource "aws_lambda_permission" "parser_invoke" {
-  statement_id             = "FunctionURLInvokeAllowPublicAccess"
+  statement_id             = "new-project-ai-ParserInvokePermission-ZoAee6refJ3o"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.parser.function_name
   principal                = "*"
@@ -119,6 +133,12 @@ resource "aws_budgets_budget" "monthly" {
     threshold_type             = "PERCENTAGE"
     notification_type          = "ACTUAL"
     subscriber_email_addresses = [var.alert_email]
+  }
+
+  # Keep the import run limited to state adoption. Remove after importing and decide whether
+  # the existing budget should receive the PROJECT_NAME tag as a separate change.
+  lifecycle {
+    ignore_changes = [tags]
   }
 }
 
