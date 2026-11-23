@@ -1,0 +1,11 @@
+services:
+  db:
+    ports: !reset []
+
+  backend:
+    build:
+      target: cloud-run
+    environment:
+      PORT: "8080"
+    ports: !override
+      - "127.0.0.1:8080:8080"
