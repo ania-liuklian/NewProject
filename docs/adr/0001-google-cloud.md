@@ -14,11 +14,11 @@
 | SQS | Drop | The current app has no queue. |
 | S3 events and Lambda | Drop | The current app has no event-triggered file processing. |
 | SES | Drop | Account verification is handled by Cognito. The app sends no separate mail, so it needs no email-provider API key. If a report is added later, keep SES behind an AWS role or put any external provider key in Secret Manager. |
-| Bedrock | Drop | The current app has no agenda parser to move to Vertex AI. |
+| Bedrock / AI assistant | Keep outside the core port | The app uses the OpenAI API for optional meeting drafts and transcription. The Cloud Run deployment leaves the assistant unconfigured, so the core migration does not require an OpenAI API key. |
 | SSM Parameter Store | Replace | Secret Manager contains the generated Cloud SQL connection URL. |
 | CloudWatch Logs | Replace | Cloud Run sends application logs to Cloud Logging. |
 | IAM roles | Replace | A dedicated Cloud Run service account can connect to Cloud SQL and read just the database secret. User ADC is used for local deployment. CI could use repository-scoped Workload Identity Federation. |
-| AWS infrastructure as code | Keep and add | The existing AWS configuration uses CloudFormation. Google Cloud has its own Terraform root and state. |
+| AWS infrastructure as code | Keep and add | The existing AWS configuration uses Terraform under `infra/`. Google Cloud has its own Terraform root and state. |
 
 Cloud Run and Cloud SQL are in the same region, so the API's database traffic stays in that region. Running Cloud SQL continuously gives predictable availability and a recurring compute charge. Stopping it outside class saves compute while the app's database-dependent routes are unavailable, and disk charges continue. Firestore removes the idle instance charge but changes the schema and access code. Keeping Aurora would preserve PostgreSQL but add cross-cloud network latency, connectivity work, possible egress charges and Aurora resume delays.
 
